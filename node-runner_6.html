@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node Runner — GreenNode.ai</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --gn-green:#0DB14B;
+    --gn-green-bright:#3DF07A;
+    --gn-green-dim:#0A7A36;
+    --bg:#04070A;
+    --surface:#0A1210;
+    --ink:#E8F2EA;
+    --ink-dim:#7C8E82;
+    --px-font:'Press Start 2P', monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'Inter',-apple-system,sans-serif;
+    min-height:100vh;
+    display:flex;align-items:center;justify-content:center;
+  }
+
+  /* ===== Website section wrapper ===== */
+  .game-section{
+    width:100%;max-width:980px;
+    padding:72px 24px 88px;
+    text-align:center;
+  }
+  .eyebrow{
+    font-family:var(--px-font);
+    font-size:10px;
+    color:var(--gn-green);
+    letter-spacing:2px;
+    display:inline-flex;align-items:center;gap:10px;
+    margin-bottom:20px;
+  }
+  .eyebrow::before,.eyebrow::after{
+    content:"";width:24px;height:2px;background:var(--gn-green);
+    box-shadow:0 0 8px rgba(13,177,75,.8);
+  }
+  h2{
+    font-family:var(--px-font);
+    font-size:clamp(18px,4vw,30px);
+    line-height:1.5;
+    letter-spacing:1px;
+    margin-bottom:16px;
+    color:var(--ink);
+    text-shadow:3px 3px 0 rgba(13,177,75,.35);
+  }
+  h2 .hl{color:var(--gn-green)}
+  .sub{
+    max-width:520px;margin:0 auto 36px;
+    font-size:15px;line-height:1.6;color:var(--ink-dim);
+  }
+  .sub kbd{
+    font-family:var(--px-font);font-size:9px;
+    background:#10201684;border:1px solid var(--gn-green-dim);
+    border-bottom-width:3px;border-radius:4px;
+    padding:3px 7px;color:var(--gn-green-bright);
+  }
+
+  /* ===== Pixel frame around the canvas ===== */
+  .frame{
+    position:relative;
+    display:inline-block;
+    width:100%;max-width:820px;
+    padding:8px;
+    background:var(--surface);
+    border:3px solid var(--gn-green);
+    box-shadow:
+      0 0 0 3px var(--bg),
+      0 0 0 6px var(--gn-green-dim),
+      0 0 40px rgba(13,177,75,.18),
+      inset 0 0 24px rgba(0,0,0,.6);
+    image-rendering:pixelated;
+  }
+  .frame::before,.frame::after{
+    content:"";position:absolute;width:10px;height:10px;background:var(--gn-green);
+  }
+  .frame::before{top:-3px;left:-3px}
+  .frame::after{bottom:-3px;right:-3px}
+  canvas{
+    display:block;width:100%;height:auto;
+    image-rendering:pixelated;
+    image-rendering:crisp-edges;
+    background:#04090C;
+    cursor:pointer;
+  }
+  .hud-bar{
+    display:flex;justify-content:space-between;align-items:center;
+    margin-top:14px;
+    font-family:var(--px-font);font-size:9px;color:var(--ink-dim);
+  }
+  .hud-bar button{
+    font-family:var(--px-font);font-size:9px;
+    background:none;border:2px solid var(--gn-green-dim);
+    color:var(--gn-green);padding:7px 12px;cursor:pointer;
+    transition:background .15s;
+  }
+  .hud-bar button:hover{background:rgba(13,177,75,.12)}
+  .hud-bar button:focus-visible{outline:2px solid var(--gn-green-bright);outline-offset:2px}
+  @media (prefers-reduced-motion: reduce){
+    .blink{animation:none !important}
+  }
+</style>
+</head>
+<body>
+
+<section class="game-section" aria-label="Node Runner mini game">
+  <div class="eyebrow">BONUS LEVEL</div>
+  <h2>HELP <span class="hl">NODE</span> OUTRUN<br>THE WORKLOAD</h2>
+  <p class="sub">Our mascot trains on H100s all day — now it needs a sprint. Press <kbd>SPACE</kbd> or tap the screen to jump over the alerts. How far can you scale?</p>
+
+  <div class="frame">
+    <canvas id="game" width="420" height="210" aria-label="Node Runner game canvas"></canvas>
+  </div>
+  <div class="hud-bar" style="max-width:820px;margin-left:auto;margin-right:auto;">
+    <span>NODE RUNNER v1.1 — GREENNODE.AI</span>
+    <button id="muteBtn" aria-label="Toggle sound">SOUND: ON</button>
+  </div>
+</section>
+
+<script>
+(() => {
+"use strict";
+
+/* ================= CONFIG ================= */
+const W = 420, H = 210;
+const GROUND_Y = 172;
+const GRAVITY = 0.42;
+const JUMP_V = -8.2;          /* slightly stronger jump to clear bigger obstacles */
+const JUMP_CUT = 0.45;
+const START_SPEED = 2.34;     /* -10% */
+const MAX_SPEED = 5.58;       /* -10% */
+const ACCEL = 0.00045;
+const NODE_SCALE = 1.3;       /* +30% */
+const OBS_SCALE = 1.15;       /* +15% */
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+/* ================= PALETTE ================= */
+const C = {
+  sky1:'#04090C', sky2:'#06120E',
+  star:'#1E4A33', starBright:'#3DF07A',
+  grassTop:'#0DB14B', grassDark:'#0A7A36',
+  dirt:'#0A1410', dirtSpeck:'#13251B',
+  white:'#F2EDE2', outline:'#0B0E0A',
+  screen:'#0A120D',
+  eye:'#3DF07A', eyeDim:'#0DB14B',
+  hood:'#171B20', hoodHi:'#242A31',
+  shoe:'#FAFAF7',
+  leaf:'#0DB14B', leafHi:'#3DF07A',
+  warn:'#F5C84B',
+  text:'#E8F2EA', textDim:'#5E7066',
+  brand:'#0DB14B'
+};
+
+/* ================= SPRITE PALETTES ================= */
+const PAL = {
+  '.':null,
+  'O':C.outline, 'W':C.white, 'S':C.screen,
+  'G':C.eye, 'g':C.eyeDim,
+  'H':C.hood, 'h':C.hoodHi,
+  'F':C.shoe, 'L':C.leaf, 'l':C.leafHi,
+  'Y':C.warn
+};
+/* obstacles: RED for contrast */
+const OB_PAL = {
+  '.':null,
+  'R':'#3A1014',   /* rack body dark red   */
+  'r':'#E5484D',   /* rack edge red        */
+  'D':'#FF6B6B',   /* LED on               */
+  'd':'#7E2328',   /* LED off              */
+  'g':'#FF8A8A',   /* light strip          */
+  'Y':C.warn
+};
+
+/* ================= PIXEL SPRITES ================= */
+const NODE_BODY = [
+"......lL........",
+".....lLLL.......",
+"....LLLLL.......",
+"..OOOOOOOOOOOO..",
+".OWWWWWWWWWWWWO.",
+".OWSSSSSSSSSSWO.",
+".OWSGGSSSSGGSWO.",
+".OWSGGSSSSGGSWO.",
+".OWSSSSSSSSSSWO.",
+".OWSSGSGSGSSSWO.",
+".OWSSSSSSSSSSWO.",
+".OWWWWWWWWWWWWO.",
+"..OOOOOOOOOOOO..",
+"...OHHHHHHHHO...",
+"..OHHHgggHHHHO..",
+"..OHhHHHHHHhHO..",
+"...OHHHHHHHHO..."
+];
+const NODE_DEAD_FACE = [
+"......lL........",
+".....lLLL.......",
+"....LLLLL.......",
+"..OOOOOOOOOOOO..",
+".OWWWWWWWWWWWWO.",
+".OWSSSSSSSSSSWO.",
+".OWSGSGSSGSGSWO.",
+".OWSSGSSSSGSSWO.",
+".OWSGSGSSGSGSWO.",
+".OWSSSSSSSSSSWO.",
+".OWSGGGGGGGGSWO.",
+".OWWWWWWWWWWWWO.",
+"..OOOOOOOOOOOO..",
+"...OHHHHHHHHO...",
+"..OHHHgggHHHHO..",
+"..OHhHHHHHHhHO..",
+"...OHHHHHHHHO..."
+];
+const LEGS_A = [
+"...FFF....FFF...",
+"..FFFF....FFF..."
+];
+const LEGS_B = [
+"....FFF..FFF....",
+"....FFF...FFFF.."
+];
+const LEGS_JUMP = [
+"....FFF..FFF....",
+"....FF....FF...."
+];
+const LEGS_DEAD = [
+"...FFF....FFF...",
+"...FFF....FFF..."
+];
+
+/* --- Obstacles: red server racks / alert boxes --- */
+const RACK_SMALL = [
+"rrrrrrrrrr",
+"rRRRRRRRRr",
+"rRDdRRRRRr",
+"rRRRRRRRRr",
+"rrrrrrrrrr",
+"rRRRRRRRRr",
+"rRdDRRRRRr",
+"rRRRRRRRRr",
+"rrrrrrrrrr",
+"rRRRRRRRRr",
+"rRDdRRRRRr",
+"rRRRRRRRRr",
+"rrrrrrrrrr"
+];
+const RACK_TALL = [
+"rrrrrrrrrr",
+"rRYYRRRRRr",
+"rRRRRRRRRr",
+"rrrrrrrrrr",
+"rRDdRRRRRr",
+"rRRRRRRRRr",
+"rrrrrrrrrr",
+"rRdDRRRRRr",
+"rRRRRRRRRr",
+"rrrrrrrrrr",
+"rRDdRRRRRr",
+"rRRRRRRRRr",
+"rrrrrrrrrr",
+"rRdDRRRRRr",
+"rRRRRRRRRr",
+"rrrrrrrrrr",
+"rRDdRRRRRr",
+"rRRRRRRRRr",
+"rrrrrrrrrr"
+];
+const GPU_BOX = [
+"rrrrrrrrrrrrrr",
+"rRRRRRRRRRRRRr",
+"rRDDRRRRRRddRr",
+"rRRRRRRRRRRRRr",
+"rRRgggggggRRRr",
+"rRRRRRRRRRRRRr",
+"rRdRdRdRdRdRRr",
+"rrrrrrrrrrrrrr"
+];
+
+
+/* ================= SPRITE RENDERER (with scale) ================= */
+let t = 0;
+function drawSprite(map, x, y, opts){
+  opts = opts || {};
+  const s = opts.scale || 1;
+  const pal = opts.pal || PAL;
+  for(let r=0;r<map.length;r++){
+    const row = map[r];
+    const py = y + Math.round(r*s);
+    const ph = Math.max(1, Math.round((r+1)*s) - Math.round(r*s));
+    for(let c=0;c<row.length;c++){
+      let ch = row[c];
+      if(ch==='.') continue;
+      if(opts.blink && (ch==='D'||ch==='d')){
+        ch = (Math.floor(t/18)+r)%2===0 ? 'D':'d';
+      }
+      const col = pal[ch];
+      if(!col) continue;
+      const px = x + Math.round(c*s);
+      const pw = Math.max(1, Math.round((c+1)*s) - Math.round(c*s));
+      ctx.fillStyle = col;
+      ctx.fillRect(px, py, pw, ph);
+    }
+  }
+}
+
+/* ================= AUDIO ================= */
+let audioCtx = null, muted = false;
+function beep(freq, dur, type, vol){
+  if(muted) return;
+  type = type||'square'; vol = vol||0.04;
+  try{
+    audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(vol, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime+dur);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime+dur);
+  }catch(e){}
+}
+const sfx = {
+  jump: ()=>beep(620,0.12),
+  score:()=>{beep(880,0.07);setTimeout(()=>beep(1175,0.1),80);},
+  die:  ()=>{beep(220,0.18);setTimeout(()=>beep(140,0.3,'sawtooth'),120);}
+};
+document.getElementById('muteBtn').addEventListener('click', e=>{
+  muted = !muted;
+  e.target.textContent = muted ? 'SOUND: OFF' : 'SOUND: ON';
+});
+
+/* ================= WORLD ================= */
+let state = 'ready';
+let speed = START_SPEED;
+let score = 0, hiScore = 0;
+let deadAt = 0;
+
+const node = {
+  x:42, y:0, vy:0,
+  w:Math.round(16*NODE_SCALE),   /* 21 */
+  h:Math.round(19*NODE_SCALE),   /* 25 */
+  onGround:true
+};
+node.y = GROUND_Y - node.h;
+
+let obstacles = [];
+let nextSpawn = 0;
+
+/* --- background: minimal tech --- */
+/* sparse drifting "data points" — the only moving element in the sky */
+const dataDots = Array.from({length:14},()=>({
+  x:Math.random()*W, y:14+Math.random()*130,
+  tw:Math.random()*240|0, bright:Math.random()<.25
+}));
+let groundSpecks = Array.from({length:60},()=>({
+  x:Math.random()*W, y:GROUND_Y+8+Math.random()*(H-GROUND_Y-12)
+}));
+
+function reset(){
+  speed = START_SPEED;
+  score = 0;
+  obstacles = [];
+  nextSpawn = 90;
+  node.y = GROUND_Y-node.h; node.vy=0; node.onGround=true;
+}
+
+/* ================= INPUT ================= */
+let spaceHeld = false;
+function press(){
+  if(state==='ready'){ state='play'; reset(); doJump(); return; }
+  if(state==='dead'){
+    if(performance.now()-deadAt > 400){ state='play'; reset(); }
+    return;
+  }
+  doJump();
+}
+function doJump(){
+  if(node.onGround){
+    node.vy = JUMP_V; node.onGround=false; sfx.jump();
+  }
+}
+window.addEventListener('keydown', e=>{
+  if(e.code==='Space'||e.code==='ArrowUp'){
+    e.preventDefault();
+    if(!spaceHeld) press();
+    spaceHeld = true;
+  }
+});
+window.addEventListener('keyup', e=>{
+  if(e.code==='Space'||e.code==='ArrowUp'){
+    spaceHeld = false;
+    if(node.vy < 0) node.vy *= JUMP_CUT;
+  }
+});
+canvas.addEventListener('pointerdown', e=>{e.preventDefault(); press();});
+canvas.addEventListener('pointerup', ()=>{ if(node.vy<0) node.vy*=JUMP_CUT; });
+
+/* ================= SPAWN / UPDATE ================= */
+const OBS_TYPES = [
+  {map:RACK_SMALL, w:10, h:13},
+  {map:RACK_TALL,  w:10, h:19},
+  {map:GPU_BOX,    w:14, h:8},
+];
+function spawnObstacle(){
+  const type = OBS_TYPES[Math.random()*OBS_TYPES.length|0];
+  const dbl = type.map===RACK_SMALL && Math.random()<0.35;
+  const baseW = Math.round(type.w*OBS_SCALE);
+  obstacles.push({
+    x:W+10, type, dbl,
+    unitW: baseW,
+    w: dbl ? baseW*2 : baseW,
+    h: Math.round(type.h*OBS_SCALE)
+  });
+  const minGap = 78 + speed*17;
+  nextSpawn = minGap + Math.random()*90;
+}
+
+function update(){
+  t++;
+  if(state!=='play') return;
+
+  speed = Math.min(MAX_SPEED, speed + ACCEL*60);
+  score += speed*0.065;
+  if(Math.floor(score)>0 && Math.floor(score)%100===0 && Math.floor(score)!==update._lastMile){
+    update._lastMile = Math.floor(score);
+    sfx.score();
+  }
+
+  node.vy += GRAVITY;
+  node.y += node.vy;
+  if(node.y >= GROUND_Y-node.h){
+    node.y = GROUND_Y-node.h; node.vy=0; node.onGround=true;
+  }
+
+  nextSpawn -= speed;
+  if(nextSpawn<=0) spawnObstacle();
+  for(const o of obstacles) o.x -= speed;
+  obstacles = obstacles.filter(o=>o.x+o.w > -4);
+
+  /* parallax: data dots drift very slowly */
+  for(const d of dataDots){
+    d.x -= speed*0.08;
+    if(d.x < -2){ d.x = W+2; d.y = 14+Math.random()*130; }
+  }
+  for(const s of groundSpecks){
+    s.x -= speed;
+    if(s.x<0){ s.x=W+Math.random()*8; s.y=GROUND_Y+8+Math.random()*(H-GROUND_Y-12); }
+  }
+
+  /* collision (forgiving inset) */
+  const nx=node.x+4, ny=node.y+4, nw=node.w-8, nh=node.h-5;
+  for(const o of obstacles){
+    const oy = GROUND_Y - o.h;
+    if(nx < o.x+o.w-2 && nx+nw > o.x+2 && ny+nh > oy+2){
+      state='dead'; deadAt=performance.now(); sfx.die();
+      hiScore = Math.max(hiScore, Math.floor(score));
+      break;
+    }
+  }
+}
+
+/* ================= BACKGROUND DRAWING (minimal tech) ================= */
+function drawBackground(){
+  /* flat dark sky */
+  ctx.fillStyle = C.sky1;
+  ctx.fillRect(0,0,W,H);
+
+  /* blueprint dot grid — static, very dim */
+  ctx.fillStyle = '#0C1F15';
+  for(let gy=16; gy<GROUND_Y-8; gy+=20){
+    for(let gx=10; gx<W; gx+=20){
+      ctx.fillRect(gx, gy, 1, 1);
+    }
+  }
+
+  /* sparse drifting data points (subtle twinkle) */
+  for(const d of dataDots){
+    const on = ((t+d.tw)%200)<150;
+    if(!on) continue;
+    ctx.fillStyle = d.bright ? '#1E6B3E' : '#123A24';
+    ctx.fillRect(d.x|0, d.y|0, d.bright?2:1, d.bright?2:1);
+  }
+
+  /* horizon glow: thin gradient band sitting on the ground line */
+  ctx.fillStyle = 'rgba(13,177,75,0.05)';
+  ctx.fillRect(0, GROUND_Y-26, W, 26);
+  ctx.fillStyle = 'rgba(13,177,75,0.09)';
+  ctx.fillRect(0, GROUND_Y-12, W, 12);
+
+  /* ground */
+  ctx.fillStyle=C.grassTop; ctx.fillRect(0,GROUND_Y,W,2);
+  ctx.fillStyle=C.grassDark; ctx.fillRect(0,GROUND_Y+2,W,2);
+  ctx.fillStyle=C.dirt; ctx.fillRect(0,GROUND_Y+4,W,H-GROUND_Y-4);
+  ctx.fillStyle=C.dirtSpeck;
+  for(const s of groundSpecks) ctx.fillRect(s.x|0,s.y|0,2,1);
+}
+
+/* ================= GAME DRAWING ================= */
+function drawNode(){
+  const x=node.x|0, y=node.y|0;
+  let legs;
+  if(state==='dead') legs=LEGS_DEAD;
+  else if(!node.onGround) legs=LEGS_JUMP;
+  else legs = (Math.floor(t/6)%2===0)?LEGS_A:LEGS_B;
+
+  const body = (state==='dead') ? NODE_DEAD_FACE : NODE_BODY;
+  drawSprite(body, x, y, {scale:NODE_SCALE});
+  drawSprite(legs, x, y+Math.round(17*NODE_SCALE), {scale:NODE_SCALE});
+
+  ctx.fillStyle='rgba(13,177,75,0.18)';
+  const sw = node.onGround?18:12;
+  ctx.fillRect(x+((node.w-sw)/2|0), GROUND_Y+3, sw, 2);
+}
+
+function drawObstacles(){
+  for(const o of obstacles){
+    const oy = GROUND_Y-o.h;
+    drawSprite(o.type.map, o.x|0, oy, {scale:OBS_SCALE, pal:OB_PAL, blink:true});
+    if(o.dbl) drawSprite(o.type.map, (o.x|0)+o.unitW, oy, {scale:OBS_SCALE, pal:OB_PAL, blink:true});
+  }
+}
+
+function pxText(str, x, y, size, color, align){
+  ctx.font = size+'px "Press Start 2P", monospace';
+  ctx.fillStyle = color;
+  ctx.textAlign = align||'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(str, x, y);
+}
+
+function drawHUD(){
+  pxText('HI '+String(hiScore).padStart(5,'0'), W-118, 10, 8, C.textDim);
+  const flash = state==='play' && Math.floor(score)%100<3 && score>50;
+  pxText(String(Math.floor(score)).padStart(5,'0'), W-10, 10, 8, flash?C.brand:C.text, 'right');
+}
+
+function drawOverlay(){
+  if(state==='ready'){
+    panel(W/2-120, 56, 240, 92);
+    pxText('NODE RUNNER', W/2, 72, 13, C.brand,'center');
+    pxText('HELP NODE DODGE THE ALERTS', W/2, 98, 7, C.text,'center');
+    if(Math.floor(t/30)%2===0)
+      pxText('PRESS SPACE / TAP TO START', W/2, 122, 7, C.eye,'center');
+  }
+  if(state==='dead'){
+    panel(W/2-110, 52, 220, 96);
+    pxText('GAME OVER', W/2, 68, 13, '#FF6B6B','center');
+    pxText('SCORE '+Math.floor(score), W/2, 96, 8, C.text,'center');
+    if(Math.floor(score)>=hiScore && hiScore>0)
+      pxText('NEW HI-SCORE!', W/2, 112, 7, C.brand,'center');
+    if(Math.floor(t/30)%2===0)
+      pxText('SPACE TO RESTART', W/2, 130, 7, C.eye,'center');
+  }
+}
+function panel(x,y,w,h){
+  ctx.fillStyle='rgba(4,9,12,0.88)';
+  ctx.fillRect(x,y,w,h);
+  ctx.fillStyle=C.brand;
+  ctx.fillRect(x,y,w,2); ctx.fillRect(x,y+h-2,w,2);
+  ctx.fillRect(x,y,2,h); ctx.fillRect(x+w-2,y,2,h);
+  ctx.fillRect(x-2,y-2,4,4); ctx.fillRect(x+w-2,y+h-2,4,4);
+}
+
+function loop(){
+  update();
+  drawBackground();
+  drawObstacles();
+  drawNode();
+  drawHUD();
+  drawOverlay();
+  requestAnimationFrame(loop);
+}
+
+document.fonts.ready.then(()=>loop());
+})();
+</script>
+</body>
+</html>
